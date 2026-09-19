@@ -207,6 +207,58 @@ def download_image(url: str, download_dir: Path) -> Path:
 
 
 # --------------------------------------------------------------------------
+# Customization (mount the image and run a hook script inside a chroot)
+# --------------------------------------------------------------------------
+
+def raw_image_path_for(image_path: Path) -> Path:
+    """Returns the path of the decompressed .img sibling of a .xz/.zip image."""
+    suffix = image_path.suffix.lower()
+    if suffix == ".xz":
+        return image_path.with_suffix("")
+    if suffix == ".zip":
+        stem = image_path.stem
+        return image_path.parent / (stem if stem.lower().endswith(".img") else f"{stem}.img")
+    return image_path
+
+
+def materialize_raw_image(image_path: Path) -> Path:
+    """Fully decompresses image_path to a raw .img file, so it can be loop-mounted.
+
+    Reuses an already-extracted file if present, so customizing/flashing again
+    doesn't re-extract from scratch."""
+    raw_path = raw_image_path_for(image_path)
+    if raw_path == image_path:
+        return image_path
+    if raw_path.exists():
+        print(f"Using already-extracted image: {raw_path}")
+        return raw_path
+
+    print(f"Extracting {image_path.name} -> {raw_path.name} ...")
+    with open_image_stream(image_path) as src, open(raw_path, "wb") as dst, tqdm(
+        unit="B", unit_scale=True, unit_divisor=1024, desc="Extracting"
+    ) as bar:
+        while True:
+            chunk = src.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            dst.write(chunk)
+            bar.update(len(chunk))
+    return raw_path
+
+
+def run_customize_script(image_path: Path, hook_script: Path) -> None:
+    if not hook_script.exists():
+        sys.exit(f"Customize script not found: {hook_script}")
+
+    helper = SCRIPT_DIR / "customize_image.sh"
+    if not helper.exists():
+        sys.exit(f"Missing helper script: {helper}")
+
+    print(f"Customizing {image_path.name} using {hook_script} (mount + chroot, needs root)...")
+    subprocess.run(["bash", str(helper), str(image_path), str(hook_script)], check=True)
+
+
+# --------------------------------------------------------------------------
 # Writing the image to the SD card
 # --------------------------------------------------------------------------
 
@@ -291,6 +343,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Only download the image, without flashing it.",
     )
+    parser.add_argument(
+        "--customize-script",
+        type=Path,
+        help=(
+            "Shell script to run inside the image before flashing it (via loop "
+            "mount + chroot, see customize_image.sh). Use it to preinstall "
+            "packages, enable SSH, drop config files, etc. Requires root and "
+            "forces the image to be fully decompressed to disk first. "
+            "See customize-scripts/example.sh for a template."
+        ),
+    )
     parser.add_argument("-y", "--yes", action="store_true", help="Don't ask for confirmation before writing.")
     return parser.parse_args(argv)
 
@@ -324,11 +387,19 @@ def main(argv: list[str] | None = None) -> None:
     url = resolve_image_url(args)
     image_path = download_image(url, args.download_dir)
 
+    needs_root = args.customize_script is not None or not args.download_only
+    if needs_root and os.geteuid() != 0:
+        sys.exit(
+            "This operation requires administrator privileges "
+            "(mounting/writing the image) - run the script with sudo."
+        )
+
+    if args.customize_script is not None:
+        image_path = materialize_raw_image(image_path)
+        run_customize_script(image_path, args.customize_script)
+
     if args.download_only:
         return
-
-    if os.geteuid() != 0:
-        sys.exit("Writing to the SD card requires administrator privileges - run the script with sudo.")
 
     device_path = pick_device(args.device)
     confirm_flash(device_path, image_path, args.yes)
