@@ -52,6 +52,8 @@ OS_IMAGES = {
 }
 DEFAULT_OS = "lite64"
 
+DEFAULT_CUSTOMIZE_SCRIPT = SCRIPT_DIR / "customize-scripts" / "dmod-dev-environment.sh"
+
 CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB
 
 
@@ -351,8 +353,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "mount + chroot, see customize_image.sh). Use it to preinstall "
             "packages, enable SSH, drop config files, etc. Requires root and "
             "forces the image to be fully decompressed to disk first. "
-            "See customize-scripts/example.sh for a template."
+            f"Default (unless --download-only or --no-customize is given): "
+            f"{DEFAULT_CUSTOMIZE_SCRIPT} (sets up a full DMOD dev environment). "
+            "See customize-scripts/example.sh for a template of your own."
         ),
+    )
+    parser.add_argument(
+        "--no-customize",
+        action="store_true",
+        help="Don't run any customize script, even the default one.",
     )
     parser.add_argument("-y", "--yes", action="store_true", help="Don't ask for confirmation before writing.")
     return parser.parse_args(argv)
@@ -383,6 +392,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.list_devices:
         print_devices(list_removable_devices())
         return
+
+    if args.no_customize:
+        args.customize_script = None
+    elif args.customize_script is None and not args.download_only:
+        args.customize_script = DEFAULT_CUSTOMIZE_SCRIPT
 
     url = resolve_image_url(args)
     image_path = download_image(url, args.download_dir)

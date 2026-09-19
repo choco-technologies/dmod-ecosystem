@@ -20,10 +20,13 @@ dependencies from `requirements.txt`, and activates it in the current shell.
 # List connected SD cards / removable USB drives
 python3 prepare_rpi_sd.py --list-devices
 
-# Download the default image (Raspberry Pi OS Lite 64-bit) and flash it,
-# auto-detecting the SD card (works when exactly one removable device
-# is connected)
+# Download the default image (Raspberry Pi OS Lite 64-bit), customize it with
+# the default DMOD dev environment (see below), and flash it, auto-detecting
+# the SD card (works when exactly one removable device is connected)
 sudo python3 prepare_rpi_sd.py
+
+# Same, but skip customization - just download and flash a plain image
+sudo python3 prepare_rpi_sd.py --no-customize
 
 # Pick a different OS variant and an explicit device
 sudo python3 prepare_rpi_sd.py --os full64 --device /dev/sdb
@@ -31,10 +34,10 @@ sudo python3 prepare_rpi_sd.py --os full64 --device /dev/sdb
 # Use a custom image (.img, .img.xz or .img.zip)
 sudo python3 prepare_rpi_sd.py --image-url https://example.com/custom.img.xz
 
-# Only download the image, without flashing it
+# Only download the image, without customizing or flashing it
 python3 prepare_rpi_sd.py --download-only
 
-# Customize the image (install packages, enable SSH, ...) before flashing
+# Use your own customize script instead of the default one
 sudo python3 prepare_rpi_sd.py --customize-script ./customize-scripts/example.sh
 ```
 
@@ -43,6 +46,11 @@ sudo python3 prepare_rpi_sd.py --customize-script ./customize-scripts/example.sh
 `--customize-script` lets you run a shell script *inside* the image's root
 filesystem before it's written to the SD card - useful for preinstalling
 packages, enabling SSH, dropping config files, adding a user, etc.
+
+Unless `--download-only` or `--no-customize` is given,
+[customize-scripts/dmod-dev-environment.sh](customize-scripts/dmod-dev-environment.sh)
+runs by default - see below. Pass `--customize-script` to use a different
+one, or `--no-customize` to skip customization entirely.
 
 Under the hood, [customize_image.sh](customize_image.sh) does what people used
 to do by hand: attach the `.img` file as a loop device (`losetup -P`), mount
@@ -70,27 +78,38 @@ Notes:
   `/mnt/host-repo` inside the chroot, so a hook script can use local sources
   (e.g. `modules/dmod`) without needing git credentials inside the chroot.
 
-#### `customize-scripts/dmod-dev-environment.sh`
+#### `customize-scripts/dmod-dev-environment.sh` (default)
 
 Turns the SD card into a full DMOD development environment - equivalent to
 `chocotechnologies/dmod:1.0.4` plus the Renode/dmffs tooling from
 dmod-boot's dev image and the Claude Code CLI - so you can build and debug
-`dmod` and its modules directly on the Pi:
+`dmod` and its modules directly on the Pi. Runs by default; to run it
+explicitly (or after passing a different `--customize-script`, to go back to
+it):
 
 ```bash
 sudo python3 prepare_rpi_sd.py --customize-script ./customize-scripts/dmod-dev-environment.sh
 ```
 
 It installs (mirroring `modules/dmod/Docker/Dockerfile.env`,
-`modules/dmod/Docker/Dockerfile`, `modules/dmboot/docker/Dockerfile.env` and
+`modules/dmod/Docker/Dockerfile`, `modules/dmboot/docker/Dockerfile.env`,
+`modules/dmboot/scripts/setup-linux-env.sh` and
 `modules/dmod/Docker/Dockerfile.claude`):
 - base build tools (gcc, cmake, ninja, git, python3, openocd, ...)
-- the `arm-none-eabi` and Xtensa (ESP32) toolchains, plus ESP-IDF
+- the `arm-none-eabi` and Xtensa (ESP32) toolchains, plus ESP-IDF (which also
+  pulls in the Espressif OpenOCD fork needed for ESP32-S3 JTAG)
+- the `aarch64-linux-gnu`/`arm-linux-gnueabihf` cross-compilers and
+  `gdb-multiarch`, for building/debugging Raspberry Pi userspace targets
 - Renode (x86_64 host only - no arm64 package exists; real hardware debugging
   via OpenOCD works on any host)
 - Node.js + the Claude Code CLI
 - `dmod` itself, built and installed from this repo's `modules/dmod` checkout
-  (via the `/mnt/host-repo` bind-mount), giving you `dmf-get`, `dmfc`, etc.
+  (via the `/mnt/host-repo` bind-mount) with `-DDMOD_TOOLS_NAME` set to the
+  matching `configs/arch/...` entry for the image's own architecture (e.g.
+  `arch/aarch64/cortex-a53` for the 64-bit Pi 3B image), giving you `dmf-get`,
+  `dmfc`, etc.
+- dmffs, via `dmf-get make_dmffs --type dmf` (best-effort: a network/registry
+  hiccup here is logged as a warning rather than failing the whole build)
 
 It copies editable working copies of `modules/dmod` and `modules/dmboot` to
 `/opt/dmod-src/` on the image, and toolchains to `/opt/dmod-tools/` (both

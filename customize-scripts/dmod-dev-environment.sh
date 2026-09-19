@@ -6,10 +6,11 @@
 # directly on the Raspberry Pi.
 #
 # It mirrors, in order:
-#   - modules/dmod/Docker/Dockerfile.env   (base packages + toolchains)
-#   - modules/dmod/Docker/Dockerfile       (build & install dmod itself)
-#   - modules/dmboot/docker/Dockerfile.env (Renode + extra packages)
-#   - modules/dmod/Docker/Dockerfile.claude (Node.js + Claude Code CLI)
+#   - modules/dmod/Docker/Dockerfile.env      (base packages + toolchains)
+#   - modules/dmod/Docker/Dockerfile          (build & install dmod itself)
+#   - modules/dmboot/docker/Dockerfile.env    (Renode + extra packages + dmffs)
+#   - modules/dmboot/scripts/setup-linux-env.sh (libgtk2.0 fallback, dmffs alias)
+#   - modules/dmod/Docker/Dockerfile.claude   (Node.js + Claude Code CLI)
 #
 # Run via prepare_rpi_sd.py --customize-script, or standalone:
 #   sudo ./customize_image.sh <image.img> customize-scripts/dmod-dev-environment.sh
@@ -68,10 +69,19 @@ apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev gcovr openocd libusb-1.0-0 \
     cmake ninja-build \
     python3 python3-pip python3-venv \
-    libncurses5 policykit-1 libgtk2.0-0 screen uml-utilities libc6-dev \
+    libncurses5 policykit-1 screen uml-utilities libc6-dev \
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
     gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf binutils-arm-linux-gnueabihf \
     gdb-multiarch
+
+# libgtk2.0-0 was renamed to libgtk2.0-0t64 on some systems as part of
+# Debian's 64-bit time_t transition (modules/dmboot/scripts/setup-linux-env.sh
+# has the same fallback).
+if apt-cache show libgtk2.0-0 >/dev/null 2>&1; then
+    apt-get install -y --no-install-recommends libgtk2.0-0
+else
+    apt-get install -y --no-install-recommends libgtk2.0-0t64
+fi
 
 # --------------------------------------------------------------------------
 # 2. choco-scripts (modules/dmod/Docker/Dockerfile.env)
@@ -187,9 +197,24 @@ mkdir -p "$DMOD_DMF_DIR" "$DMOD_DMFC_DIR"
     cmake --build .
     cmake --install . --prefix=/usr/local --component tools
 )
+export PATH="$PATH:/usr/local/bin"
 
 # --------------------------------------------------------------------------
-# 8. dmod-boot source, as an editable starting point (not built here - it's
+# 8. dmffs (modules/dmboot/docker/Dockerfile +
+#    modules/dmboot/scripts/setup-linux-env.sh) - fetched via dmf-get, which
+#    was just built and installed above. Best-effort: don't fail the whole
+#    customization if the module registry isn't reachable from here.
+# --------------------------------------------------------------------------
+
+echo "==> Installing dmffs (dmf-get make_dmffs)"
+if dmf-get make_dmffs --type dmf; then
+    echo "alias make_dmffs='dmod_loader \${DMOD_DMF_DIR}/make_dmffs.dmf --args'" >> /etc/bash.bashrc
+else
+    echo "    Warning: 'dmf-get make_dmffs' failed (registry unreachable?) - skipping." >&2
+fi
+
+# --------------------------------------------------------------------------
+# 9. dmod-boot source, as an editable starting point (not built here - it's
 #    firmware, built per-target once you're on the board).
 # --------------------------------------------------------------------------
 
@@ -200,7 +225,7 @@ if [[ -d "$HOST_REPO/modules/dmboot" ]]; then
 fi
 
 # --------------------------------------------------------------------------
-# 9. Node.js + Claude Code CLI (modules/dmod/Docker/Dockerfile.claude)
+# 10. Node.js + Claude Code CLI (modules/dmod/Docker/Dockerfile.claude)
 # --------------------------------------------------------------------------
 
 echo "==> Installing Node.js and the Claude Code CLI"
@@ -210,7 +235,7 @@ apt-get install -y nodejs ripgrep
 npm install -g @anthropic-ai/claude-code
 
 # --------------------------------------------------------------------------
-# 10. Wire up PATH / env vars for every login shell
+# 11. Wire up PATH / env vars for every login shell
 # --------------------------------------------------------------------------
 
 echo "==> Writing /etc/profile.d/dmod-dev.sh"
