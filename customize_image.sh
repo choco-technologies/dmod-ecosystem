@@ -12,11 +12,18 @@
 # as root, "inside" the Raspberry Pi's filesystem (via qemu-user-static, if
 # the image architecture doesn't match the host).
 #
+# This repo (the directory this script lives in) is also bind-mounted
+# read-only inside the chroot at /mnt/host-repo, so a hook script can pull in
+# local sources (e.g. modules/dmod) without needing network/git credentials
+# inside the chroot.
+#
 # Requires: losetup, mount, chroot (util-linux), and - when flashing an ARM
 # image from an x86_64 host - the qemu-user-static package (for
 # qemu-aarch64-static / qemu-arm-static) with binfmt_misc registered.
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ $EUID -ne 0 ]]; then
     echo "This script must be run as root (it uses losetup/mount/chroot)." >&2
@@ -118,6 +125,12 @@ mount -t proc proc "$MNT/proc"
 MOUNTED+=("$MNT/proc")
 mount -t sysfs sysfs "$MNT/sys"
 MOUNTED+=("$MNT/sys")
+
+echo "Bind-mounting repo ($SCRIPT_DIR) read-only at /mnt/host-repo..."
+mkdir -p "$MNT/mnt/host-repo"
+mount --bind "$SCRIPT_DIR" "$MNT/mnt/host-repo"
+mount -o remount,ro,bind "$MNT/mnt/host-repo"
+MOUNTED+=("$MNT/mnt/host-repo")
 
 # Give the chroot working DNS resolution (needed for apt-get, curl, etc.).
 if [[ -f "$MNT/etc/resolv.conf" || -L "$MNT/etc/resolv.conf" ]]; then

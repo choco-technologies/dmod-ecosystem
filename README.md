@@ -66,6 +66,38 @@ Notes:
   `apt-get`) - copy it and adapt it to your needs.
 - You can also run it standalone, without going through `prepare_rpi_sd.py`:
   `sudo ./customize_image.sh path/to/image.img customize-scripts/your-script.sh`.
+- `customize_image.sh` also bind-mounts this repo read-only at
+  `/mnt/host-repo` inside the chroot, so a hook script can use local sources
+  (e.g. `modules/dmod`) without needing git credentials inside the chroot.
+
+#### `customize-scripts/dmod-dev-environment.sh`
+
+Turns the SD card into a full DMOD development environment - equivalent to
+`chocotechnologies/dmod:1.0.4` plus the Renode/dmffs tooling from
+dmod-boot's dev image and the Claude Code CLI - so you can build and debug
+`dmod` and its modules directly on the Pi:
+
+```bash
+sudo python3 prepare_rpi_sd.py --customize-script ./customize-scripts/dmod-dev-environment.sh
+```
+
+It installs (mirroring `modules/dmod/Docker/Dockerfile.env`,
+`modules/dmod/Docker/Dockerfile`, `modules/dmboot/docker/Dockerfile.env` and
+`modules/dmod/Docker/Dockerfile.claude`):
+- base build tools (gcc, cmake, ninja, git, python3, openocd, ...)
+- the `arm-none-eabi` and Xtensa (ESP32) toolchains, plus ESP-IDF
+- Renode (x86_64 host only - no arm64 package exists; real hardware debugging
+  via OpenOCD works on any host)
+- Node.js + the Claude Code CLI
+- `dmod` itself, built and installed from this repo's `modules/dmod` checkout
+  (via the `/mnt/host-repo` bind-mount), giving you `dmf-get`, `dmfc`, etc.
+
+It copies editable working copies of `modules/dmod` and `modules/dmboot` to
+`/opt/dmod-src/` on the image, and toolchains to `/opt/dmod-tools/` (both
+added to `PATH` for every login shell via `/etc/profile.d/dmod-dev.sh`).
+Takes a while to run (several downloads + a full `dmod` build under qemu
+emulation if cross-customizing from an x86_64 host) - the `apt-get`/`wget`
+steps need internet access on the machine running `prepare_rpi_sd.py`.
 
 ### OS variants (`--os`)
 
