@@ -1,0 +1,3 @@
+[submodule "modules/dmboot"]
+	path = modules/dmboot
+	url = git@github.com:choco-technologies/dmod-boot.git
