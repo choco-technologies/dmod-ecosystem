@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# prepare_rpi_sd.py - downloaded Raspberry Pi OS images
+/images/
