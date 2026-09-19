@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Pobiera obraz Raspberry Pi OS i zapisuje go na karcie SD.
+"""Downloads a Raspberry Pi OS image and writes it to an SD card.
 
-Przykłady użycia:
+Usage examples:
 
-    # Pobierz domyślny obraz (Raspberry Pi OS Lite 64-bit) i wgraj go,
-    # automatycznie wykrywając kartę SD (jeśli podłączona jest tylko jedna).
+    # Download the default image (Raspberry Pi OS Lite 64-bit) and flash it,
+    # auto-detecting the SD card (only works if exactly one is connected).
     sudo python3 prepare_rpi_sd.py
 
-    # Wypisz dostępne, wymienne urządzenia blokowe.
+    # List available removable block devices.
     python3 prepare_rpi_sd.py --list-devices
 
-    # Wybierz inny obraz systemu i konkretne urządzenie.
+    # Pick a different OS variant and an explicit device.
     sudo python3 prepare_rpi_sd.py --os full64 --device /dev/sdb
 
-    # Podaj własny URL do obrazu (.img, .img.xz lub .img.zip).
+    # Use a custom image URL (.img, .img.xz or .img.zip).
     sudo python3 prepare_rpi_sd.py --image-url https://example.com/custom.img.xz
 """
 
@@ -34,16 +34,16 @@ try:
     from tqdm import tqdm
 except ImportError:
     sys.exit(
-        "Brakuje wymaganych modułów. Zainstaluj je poleceniem:\n"
+        "Missing required modules. Install them with:\n"
         "  pip install -r requirements.txt\n"
-        "(albo uruchom `source setup_venv.sh`, żeby przygotować i aktywować venv)."
+        "(or run `source setup_venv.sh` to set up and activate a venv)."
     )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DOWNLOAD_DIR = SCRIPT_DIR / "images"
 
-# Stabilne linki "latest" udostępniane przez Raspberry Pi Foundation -
-# zawsze wskazują na najnowszy obraz danej odmiany.
+# Stable "latest" links provided by the Raspberry Pi Foundation - they
+# always point at the newest image of a given variant.
 OS_IMAGES = {
     "lite64": "https://downloads.raspberrypi.com/raspios_lite_arm64_latest",
     "full64": "https://downloads.raspberrypi.com/raspios_arm64_latest",
@@ -60,11 +60,11 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 # --------------------------------------------------------------------------
-# Wykrywanie urządzeń blokowych (kart SD)
+# Block device detection (SD cards)
 # --------------------------------------------------------------------------
 
 def list_removable_devices() -> list[dict]:
-    """Zwraca listę wymiennych urządzeń blokowych (karty SD / USB) na Linuksie."""
+    """Returns the list of removable block devices (SD cards / USB) on Linux."""
     result = subprocess.run(
         ["lsblk", "-J", "-b", "-o", "NAME,SIZE,TYPE,RM,TRAN,MODEL,MOUNTPOINT"],
         check=True,
@@ -77,11 +77,11 @@ def list_removable_devices() -> list[dict]:
     for entry in data.get("blockdevices", []):
         if entry.get("type") != "disk":
             continue
-        if entry.get("rm") not in (True, "1", 1):
-            continue
-        # Karty SD w czytnikach wbudowanych bywają zgłaszane przez sterownik
-        # "mmc", a przez USB - "usb". Obie traktujemy jako nośniki wymienne.
-        if entry.get("tran") not in ("usb", "mmc", None):
+        # Built-in SD card readers report their transport as "mmc", USB
+        # devices as "usb". Internal card readers often report RM=0 even
+        # though the card itself is removable, so for "mmc" we don't
+        # require the RM flag - the transport alone is enough.
+        if entry.get("tran") not in ("usb", "mmc"):
             continue
         devices.append(
             {
@@ -106,16 +106,16 @@ def human_size(num_bytes: int) -> str:
 
 def print_devices(devices: list[dict]) -> None:
     if not devices:
-        print("Nie znaleziono żadnych wymiennych urządzeń blokowych.")
+        print("No removable block devices found.")
         return
-    print("Wykryte wymienne urządzenia:")
+    print("Detected removable devices:")
     for dev in devices:
-        model = dev["model"] or "nieznany model"
+        model = dev["model"] or "unknown model"
         print(f"  {dev['path']}  -  {human_size(dev['size'])}  -  {model}  ({dev['tran']})")
 
 
 def is_system_disk(device_path: str) -> bool:
-    """Zabezpieczenie: sprawdza, czy urządzenie zawiera zamontowany / lub /boot."""
+    """Safety check: does this device contain the mounted / or /boot?"""
     result = subprocess.run(
         ["lsblk", "-J", "-o", "NAME,MOUNTPOINT"],
         check=True,
@@ -142,26 +142,26 @@ def pick_device(explicit: str | None) -> str:
     if explicit:
         device = explicit
         if not Path(device).exists():
-            sys.exit(f"Urządzenie {device} nie istnieje.")
+            sys.exit(f"Device {device} does not exist.")
         return device
 
     devices = list_removable_devices()
     if not devices:
         sys.exit(
-            "Nie wykryto żadnej karty SD/USB. Podłącz kartę albo wskaż "
-            "urządzenie ręcznie przez --device /dev/sdX."
+            "No SD card / USB drive detected. Connect one, or specify the "
+            "device explicitly with --device /dev/sdX."
         )
     if len(devices) > 1:
         print_devices(devices)
         sys.exit(
-            "\nWykryto więcej niż jedno urządzenie wymienne - wskaż konkretne "
-            "przez --device /dev/sdX, żeby uniknąć pomyłki."
+            "\nMore than one removable device detected - specify which one "
+            "with --device /dev/sdX to avoid picking the wrong one."
         )
     return devices[0]["path"]
 
 
 # --------------------------------------------------------------------------
-# Pobieranie obrazu
+# Image download
 # --------------------------------------------------------------------------
 
 def resolve_image_url(args: argparse.Namespace) -> str:
@@ -188,10 +188,10 @@ def download_image(url: str, download_dir: Path) -> Path:
         total = int(response.headers.get("content-length", 0))
 
         if dest.exists() and total and dest.stat().st_size == total:
-            print(f"Obraz już pobrany: {dest} (pomijam pobieranie).")
+            print(f"Image already downloaded: {dest} (skipping download).")
             return dest
 
-        print(f"Pobieranie {response.url}\n  -> {dest}")
+        print(f"Downloading {response.url}\n  -> {dest}")
         tmp_dest = dest.with_suffix(dest.suffix + ".part")
         with open(tmp_dest, "wb") as fh, tqdm(
             total=total or None, unit="B", unit_scale=True, unit_divisor=1024
@@ -207,12 +207,12 @@ def download_image(url: str, download_dir: Path) -> Path:
 
 
 # --------------------------------------------------------------------------
-# Zapis obrazu na kartę SD
+# Writing the image to the SD card
 # --------------------------------------------------------------------------
 
 def open_image_stream(image_path: Path):
-    """Zwraca obiekt plikopodobny z zawartością obrazu .img (transparentnie
-    dekompresując .xz / .zip w locie, bez zapisywania rozpakowanej kopii)."""
+    """Returns a file-like object with the .img contents (transparently
+    decompressing .xz / .zip on the fly, without writing an extracted copy)."""
     suffix = image_path.suffix.lower()
     if suffix == ".xz":
         return lzma.open(image_path, "rb")
@@ -220,7 +220,7 @@ def open_image_stream(image_path: Path):
         zf = zipfile.ZipFile(image_path)
         img_names = [n for n in zf.namelist() if n.lower().endswith(".img")]
         if not img_names:
-            sys.exit(f"Nie znaleziono pliku .img w archiwum {image_path}.")
+            sys.exit(f"No .img file found inside archive {image_path}.")
         return zf.open(img_names[0])
     return open(image_path, "rb")
 
@@ -239,7 +239,7 @@ def unmount_partitions(device_path: str) -> None:
         for entry in entries:
             mp = entry.get("mountpoint")
             if mp:
-                print(f"Odmontowuję {mp}...")
+                print(f"Unmounting {mp}...")
                 subprocess.run(["umount", mp], check=False)
             walk(entry.get("children", []))
 
@@ -249,9 +249,9 @@ def unmount_partitions(device_path: str) -> None:
 def flash_image(image_path: Path, device_path: str) -> None:
     unmount_partitions(device_path)
 
-    print(f"Zapisywanie {image_path.name} -> {device_path} ...")
+    print(f"Writing {image_path.name} -> {device_path} ...")
     with open_image_stream(image_path) as src, open(device_path, "wb") as dst:
-        with tqdm(unit="B", unit_scale=True, unit_divisor=1024, desc="Zapisywanie") as bar:
+        with tqdm(unit="B", unit_scale=True, unit_divisor=1024, desc="Writing") as bar:
             while True:
                 chunk = src.read(CHUNK_SIZE)
                 if not chunk:
@@ -262,7 +262,7 @@ def flash_image(image_path: Path, device_path: str) -> None:
         os.fsync(dst.fileno())
 
     subprocess.run(["sync"], check=False)
-    print("Zapis zakończony.")
+    print("Write complete.")
 
 
 # --------------------------------------------------------------------------
@@ -275,43 +275,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--os",
         choices=sorted(OS_IMAGES),
         default=DEFAULT_OS,
-        help=f"Wariant Raspberry Pi OS do pobrania (domyślnie: {DEFAULT_OS}).",
+        help=f"Raspberry Pi OS variant to download (default: {DEFAULT_OS}).",
     )
-    parser.add_argument("--image-url", help="Własny URL obrazu (.img / .img.xz / .img.zip), nadpisuje --os.")
+    parser.add_argument("--image-url", help="Custom image URL (.img / .img.xz / .img.zip), overrides --os.")
     parser.add_argument(
         "--download-dir",
         type=Path,
         default=DEFAULT_DOWNLOAD_DIR,
-        help=f"Katalog na pobrane obrazy (domyślnie: {DEFAULT_DOWNLOAD_DIR}).",
+        help=f"Directory for downloaded images (default: {DEFAULT_DOWNLOAD_DIR}).",
     )
-    parser.add_argument("--device", help="Urządzenie docelowe, np. /dev/sdb. Bez podania - autodetekcja.")
-    parser.add_argument("--list-devices", action="store_true", help="Wypisz wykryte karty SD/USB i zakończ.")
+    parser.add_argument("--device", help="Target device, e.g. /dev/sdb. Auto-detected if not given.")
+    parser.add_argument("--list-devices", action="store_true", help="List detected SD cards/USB drives and exit.")
     parser.add_argument(
         "--download-only",
         action="store_true",
-        help="Tylko pobierz obraz, bez zapisywania na kartę.",
+        help="Only download the image, without flashing it.",
     )
-    parser.add_argument("-y", "--yes", action="store_true", help="Nie pytaj o potwierdzenie przed zapisem.")
+    parser.add_argument("-y", "--yes", action="store_true", help="Don't ask for confirmation before writing.")
     return parser.parse_args(argv)
 
 
 def confirm_flash(device_path: str, image_path: Path, auto_yes: bool) -> None:
     if is_system_disk(device_path):
         sys.exit(
-            f"BEZPIECZEŃSTWO: {device_path} wygląda na dysk systemowy (zawiera / lub /boot). "
-            "Przerywam."
+            f"SAFETY: {device_path} looks like the system disk (contains / or /boot). "
+            "Aborting."
         )
 
-    print(f"\nObraz:     {image_path}")
-    print(f"Urządzenie: {device_path}")
-    print("UWAGA: cała zawartość urządzenia zostanie bezpowrotnie nadpisana!")
+    print(f"\nImage:  {image_path}")
+    print(f"Device: {device_path}")
+    print("WARNING: all contents of this device will be permanently overwritten!")
 
     if auto_yes:
         return
 
-    answer = input(f"Wpisz '{device_path}', żeby potwierdzić zapis: ")
+    answer = input(f"Type '{device_path}' to confirm the write: ")
     if answer.strip() != device_path:
-        sys.exit("Nie potwierdzono - przerywam.")
+        sys.exit("Not confirmed - aborting.")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -328,7 +328,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if os.geteuid() != 0:
-        sys.exit("Zapis na kartę SD wymaga uprawnień administratora - uruchom skrypt przez sudo.")
+        sys.exit("Writing to the SD card requires administrator privileges - run the script with sudo.")
 
     device_path = pick_device(args.device)
     confirm_flash(device_path, image_path, args.yes)
@@ -339,6 +339,6 @@ if __name__ == "__main__":
     try:
         main()
     except subprocess.CalledProcessError as exc:
-        sys.exit(f"Polecenie {exc.cmd} zakończyło się błędem ({exc.returncode}).")
+        sys.exit(f"Command {exc.cmd} failed ({exc.returncode}).")
     except KeyboardInterrupt:
-        sys.exit("\nPrzerwano przez użytkownika.")
+        sys.exit("\nInterrupted by user.")
