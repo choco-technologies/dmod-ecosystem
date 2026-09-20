@@ -52,7 +52,33 @@ OS_IMAGES = {
 }
 DEFAULT_OS = "lite64"
 
-DEFAULT_CUSTOMIZE_SCRIPT = SCRIPT_DIR / "customize-scripts" / "dmod-dev-environment.sh"
+# The three built-in customize tiers (see customize-scripts/README or the
+# scripts themselves): mini < basic < full, each building on the previous.
+CUSTOMIZE_TIERS = {
+    "mini": SCRIPT_DIR / "customize-scripts" / "mini.sh",
+    "basic": SCRIPT_DIR / "customize-scripts" / "basic.sh",
+    "full": SCRIPT_DIR / "customize-scripts" / "full.sh",
+}
+
+# Auto tier selection thresholds: pick the richest tier that comfortably
+# fits the target SD card. "basic" needs room for a dmod build; "full" adds
+# several GB of embedded toolchains (ESP-IDF alone is a few GB) and Renode.
+GIB = 1024**3
+AUTO_TIER_MIN_SIZE = {
+    "full": 64 * GIB,
+    "basic": 8 * GIB,
+}
+
+# Raspberry Pi OS images ship with their root filesystem sized tight to their
+# content (normally expanded to fill the SD card by a first-boot service) -
+# there's rarely more than a few hundred MB free to install anything into.
+# The "basic"/"full" tiers now do their actual (multi-GB) work natively on
+# the Pi's own first real boot rather than in the working image (see
+# mini.sh's --defer-tier), so all that's ever staged into the working image
+# here is mini.sh's own lightweight work (a few small files, plus - for a
+# deferred tier - a copy of the dmod/dmod-boot source, a few MB). This flat
+# safety margin comfortably covers that regardless of tier.
+DEFAULT_GROW_MB = 512
 
 CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB
 
@@ -162,6 +188,25 @@ def pick_device(explicit: str | None) -> str:
     return devices[0]["path"]
 
 
+def device_size_bytes(device_path: str) -> int:
+    result = subprocess.run(
+        ["lsblk", "-b", "-d", "-n", "-o", "SIZE", device_path],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return int(result.stdout.strip())
+
+
+def auto_customize_tier(size_bytes: int) -> str:
+    """Picks the richest customize tier that comfortably fits a card this size."""
+    if size_bytes >= AUTO_TIER_MIN_SIZE["full"]:
+        return "full"
+    if size_bytes >= AUTO_TIER_MIN_SIZE["basic"]:
+        return "basic"
+    return "mini"
+
+
 # --------------------------------------------------------------------------
 # Image download
 # --------------------------------------------------------------------------
@@ -248,7 +293,9 @@ def materialize_raw_image(image_path: Path) -> Path:
     return raw_path
 
 
-def run_customize_script(image_path: Path, hook_script: Path) -> None:
+def run_customize_script(
+    image_path: Path, hook_script: Path, grow_mb: int = 0, hook_args: list[str] | None = None
+) -> None:
     if not hook_script.exists():
         sys.exit(f"Customize script not found: {hook_script}")
 
@@ -257,7 +304,13 @@ def run_customize_script(image_path: Path, hook_script: Path) -> None:
         sys.exit(f"Missing helper script: {helper}")
 
     print(f"Customizing {image_path.name} using {hook_script} (mount + chroot, needs root)...")
-    subprocess.run(["bash", str(helper), str(image_path), str(hook_script)], check=True)
+    cmd = ["bash", str(helper)]
+    if grow_mb > 0:
+        cmd += ["--grow-mb", str(grow_mb)]
+    cmd += [str(image_path), str(hook_script)]
+    if hook_args:
+        cmd += ["--", *hook_args]
+    subprocess.run(cmd, check=True)
 
 
 # --------------------------------------------------------------------------
@@ -346,25 +399,71 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Only download the image, without flashing it.",
     )
     parser.add_argument(
-        "--customize-script",
-        type=Path,
+        "--customize",
+        choices=["auto", "none", *CUSTOMIZE_TIERS],
+        default="auto",
         help=(
-            "Shell script to run inside the image before flashing it (via loop "
-            "mount + chroot, see customize_image.sh). Use it to preinstall "
-            "packages, enable SSH, drop config files, etc. Requires root and "
-            "forces the image to be fully decompressed to disk first. "
-            f"Default (unless --download-only or --no-customize is given): "
-            f"{DEFAULT_CUSTOMIZE_SCRIPT} (sets up a full DMOD dev environment). "
-            "See customize-scripts/example.sh for a template of your own."
+            "Which built-in customize tier to apply: 'mini' (SSH/wifi/user "
+            "only, applied immediately), 'basic' (+ compiles and installs "
+            "dmod) or 'full' (+ embedded toolchains, Renode, dmffs, Claude "
+            "Code CLI - see customize-scripts/full.sh) - for basic/full, "
+            "mini's setup still runs immediately, but the heavier build is "
+            "staged to run natively the first time the Pi actually boots "
+            "(much faster than building here under qemu-user-static, and "
+            "avoids its network flakiness) - see customize-scripts/mini.sh "
+            "--defer-tier. 'none' disables all of this. Default 'auto' picks "
+            "the richest tier that comfortably fits the target SD card's "
+            "size (mini/basic/full for roughly <8GB/<64GB/>=64GB) - ignored "
+            "when --download-only is given unless --customize is set "
+            "explicitly. Ignored if --customize-script is given."
         ),
     )
     parser.add_argument(
-        "--no-customize",
-        action="store_true",
-        help="Don't run any customize script, even the default one.",
+        "--customize-script",
+        type=Path,
+        help=(
+            "Your own shell script to run inside the image before flashing it "
+            "(via loop mount + chroot, see customize_image.sh), instead of one "
+            "of the --customize tiers (and their wifi/user/defer handling). "
+            "Requires root and forces the image to be fully decompressed to "
+            "disk first. See customize-scripts/example.sh for a template."
+        ),
     )
+    parser.add_argument(
+        "--wifi-ssid",
+        help="Wi-Fi network to connect to on first boot (applied immediately by the mini tier).",
+    )
+    parser.add_argument("--wifi-password", help="Wi-Fi password. Omit for an open network.")
+    parser.add_argument(
+        "--wifi-country",
+        help="2-letter Wi-Fi regulatory country code (e.g. PL, US, GB). Required if --wifi-ssid is given.",
+    )
+    parser.add_argument("--pi-username", help="Login user to create on the Pi (used together with --pi-password).")
+    parser.add_argument("--pi-password", help="Password for --pi-username.")
     parser.add_argument("-y", "--yes", action="store_true", help="Don't ask for confirmation before writing.")
     return parser.parse_args(argv)
+
+
+def validate_mini_args(args: argparse.Namespace) -> None:
+    if args.wifi_ssid and not args.wifi_country:
+        sys.exit("--wifi-country is required when --wifi-ssid is given.")
+    if args.wifi_password and not args.wifi_ssid:
+        sys.exit("--wifi-password requires --wifi-ssid.")
+    if bool(args.pi_username) != bool(args.pi_password):
+        sys.exit("--pi-username and --pi-password must be given together.")
+
+
+def mini_hook_args(args: argparse.Namespace, defer_tier: str | None) -> list[str]:
+    hook_args: list[str] = []
+    if args.wifi_ssid:
+        hook_args += ["--wifi-ssid", args.wifi_ssid, "--wifi-country", args.wifi_country]
+        if args.wifi_password:
+            hook_args += ["--wifi-password", args.wifi_password]
+    if args.pi_username:
+        hook_args += ["--username", args.pi_username, "--password", args.pi_password]
+    if defer_tier:
+        hook_args += ["--defer-tier", defer_tier]
+    return hook_args
 
 
 def confirm_flash(device_path: str, image_path: Path, auto_yes: bool) -> None:
@@ -393,29 +492,64 @@ def main(argv: list[str] | None = None) -> None:
         print_devices(list_removable_devices())
         return
 
-    if args.no_customize:
-        args.customize_script = None
-    elif args.customize_script is None and not args.download_only:
-        args.customize_script = DEFAULT_CUSTOMIZE_SCRIPT
+    validate_mini_args(args)
+    if args.customize_script and (args.wifi_ssid or args.pi_username):
+        print(
+            "Note: --wifi-* / --pi-* are only understood by the built-in "
+            "mini/basic/full tiers, not by --customize-script - ignoring them."
+        )
 
     url = resolve_image_url(args)
     image_path = download_image(url, args.download_dir)
 
-    needs_root = args.customize_script is not None or not args.download_only
+    # Auto tier selection needs to know the target device's size, so it's
+    # picked before customizing/flashing, not just before flashing. If the
+    # user gave an explicit --device we can resolve it even with
+    # --download-only (no auto-detect forced though, that would needlessly
+    # require a card to be connected).
+    device_path = None
+    if args.device or not args.download_only:
+        device_path = pick_device(args.device)
+
+    customize_script = args.customize_script
+    hook_args: list[str] = []
+    if customize_script is None and args.customize != "none":
+        if args.customize == "auto":
+            if device_path is None:
+                # --download-only with no device and no explicit tier: don't
+                # guess a tier for a card we're not even looking at.
+                tier = None
+            else:
+                size_bytes = device_size_bytes(device_path)
+                tier = auto_customize_tier(size_bytes)
+                print(f"Auto-selected customize tier '{tier}' for {device_path} ({human_size(size_bytes)})")
+        else:
+            tier = args.customize
+
+        if tier is not None:
+            # mini/basic/full all actually run via mini.sh: mini's own setup
+            # (SSH/wifi/user) applies immediately, while basic/full are
+            # staged to run natively the first time the Pi boots for real
+            # instead (see mini.sh --defer-tier) - much faster than building
+            # here under qemu-user-static, and avoids its network flakiness.
+            customize_script = CUSTOMIZE_TIERS["mini"]
+            defer_tier = tier if tier in ("basic", "full") else None
+            hook_args = mini_hook_args(args, defer_tier)
+
+    needs_root = customize_script is not None or not args.download_only
     if needs_root and os.geteuid() != 0:
         sys.exit(
             "This operation requires administrator privileges "
             "(mounting/writing the image) - run the script with sudo."
         )
 
-    if args.customize_script is not None:
+    if customize_script is not None:
         image_path = materialize_raw_image(image_path)
-        run_customize_script(image_path, args.customize_script)
+        run_customize_script(image_path, customize_script, DEFAULT_GROW_MB, hook_args)
 
     if args.download_only:
         return
 
-    device_path = pick_device(args.device)
     confirm_flash(device_path, image_path, args.yes)
     flash_image(image_path, device_path)
 

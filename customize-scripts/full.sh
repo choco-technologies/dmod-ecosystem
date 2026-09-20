@@ -1,34 +1,43 @@
 #!/usr/bin/env bash
-# Turns the SD card image into a full DMOD development environment,
-# equivalent to what you get in the chocotechnologies/dmod:1.0.4 Docker
-# image plus the Renode/dmffs tooling from dmod-boot's dev image and the
-# Claude Code CLI - so dmod and its modules can be built and debugged
-# directly on the Raspberry Pi.
+# Tier: full - the complete DMOD development environment, equivalent to
+# chocotechnologies/dmod:1.0.4 plus the Renode/dmffs tooling from
+# dmod-boot's dev image and the Claude Code CLI - so dmod and its modules
+# can be built and debugged directly on the Raspberry Pi. Builds on top of
+# the "basic" tier (which itself includes "mini").
 #
 # It mirrors, in order:
-#   - modules/dmod/Docker/Dockerfile.env      (base packages + toolchains)
-#   - modules/dmod/Docker/Dockerfile          (build & install dmod itself)
+#   - customize-scripts/basic.sh              (mini + build tools + dmod itself)
+#   - modules/dmod/Docker/Dockerfile.env      (embedded toolchains)
 #   - modules/dmboot/docker/Dockerfile.env    (Renode + extra packages + dmffs)
 #   - modules/dmboot/scripts/setup-linux-env.sh (libgtk2.0 fallback, dmffs alias)
 #   - modules/dmod/Docker/Dockerfile.claude   (Node.js + Claude Code CLI)
 #
-# Run via prepare_rpi_sd.py --customize-script, or standalone:
-#   sudo ./customize_image.sh <image.img> customize-scripts/dmod-dev-environment.sh
-#
-# customize_image.sh bind-mounts this repo read-only at /mnt/host-repo, so
-# modules/dmod and modules/dmboot sources are available without needing git
-# credentials inside the chroot.
+# Runs in one of two contexts - see basic.sh's header for details:
+#   - image-prep time, in the chroot via customize_image.sh (bind-mounts
+#     this repo read-only at /mnt/host-repo) - direct invocation.
+#   - natively on the Pi's own first real boot, from a pre-staged copy - what
+#     `prepare_rpi_sd.py --customize full` actually sets up.
 
 set -euo pipefail
 
 HOST_REPO=/mnt/host-repo
-SRC_DIR=/opt/dmod-src
-TOOLS_DIR=/opt/dmod-tools
-
-if [[ ! -d "$HOST_REPO/modules/dmod" ]]; then
-    echo "Expected $HOST_REPO/modules/dmod (repo bind-mount) - is this being run via customize_image.sh?" >&2
-    exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -d "$HOST_REPO/customize-scripts" ]]; then
+    CUSTOMIZE_SCRIPTS_DIR="$HOST_REPO/customize-scripts"
+else
+    CUSTOMIZE_SCRIPTS_DIR="$SCRIPT_DIR"
 fi
+source "$CUSTOMIZE_SCRIPTS_DIR/common/paths.sh"
+
+echo "==> Running basic tier (build & install dmod)"
+bash "$CUSTOMIZE_SCRIPTS_DIR/basic.sh"
+
+# basic.sh ran as a separate process, so its env vars don't carry over here -
+# re-export the same (fixed) paths from common/paths.sh instead.
+export DEBIAN_FRONTEND=noninteractive
+export DMOD_DMF_DIR
+export DMOD_DMFC_DIR
+export PATH="$PATH:/usr/local/bin"
 
 case "$(uname -m)" in
     x86_64)          HOST_ARCH=x86_64 ;;
@@ -40,60 +49,47 @@ case "$(uname -m)" in
 esac
 echo "==> Target architecture inside the image: $HOST_ARCH"
 
-# DMOD_TOOLS_NAME picks the matching dmod/configs/arch/... toolchain config
-# (see modules/dmod/configs/arch) so dmod is built with the right compiler
-# and CPU flags for this board, instead of the "arch/x86_64" default.
-case "$(uname -m)" in
-    x86_64)          DMOD_TOOLS_NAME="arch/x86_64" ;;
-    aarch64|arm64)   DMOD_TOOLS_NAME="arch/aarch64/cortex-a53" ;;
-    armv7l|armv6l)   DMOD_TOOLS_NAME="arch/armv7/cortex-a53" ;;
-    *)
-        echo "No dmod arch config known for $(uname -m)" >&2
-        exit 1
-        ;;
-esac
-echo "==> Building dmod with DMOD_TOOLS_NAME=$DMOD_TOOLS_NAME"
-
-export DEBIAN_FRONTEND=noninteractive
+# Installs the first available alternative from a list of candidate package
+# name(s) (space-separated within one candidate, for packages that were
+# split in two, e.g. "polkitd pkexec"). Package names/availability drift
+# between Debian releases (Bullseye/Bookworm/Trixie), which is what Raspberry
+# Pi OS is based on - a single hardcoded name breaks `apt-get install` for
+# the *whole* batch on newer/older releases.
+apt_install_alt() {
+    local candidate
+    for candidate in "$@"; do
+        # Try the actual install rather than pre-checking with `apt-cache
+        # show`: transitional/dummy packages (e.g. old policykit-1 on
+        # Bookworm+) still show up there with no installable candidate.
+        if apt-get install -y --no-install-recommends $candidate 2>/dev/null; then
+            return 0
+        fi
+    done
+    echo "    Warning: none of [$*] are installable, skipping." >&2
+}
 
 # --------------------------------------------------------------------------
-# 1. Base packages (modules/dmod/Docker/Dockerfile.env +
-#    modules/dmboot/docker/Dockerfile.env)
+# 1. Extra base packages, on top of "basic" (modules/dmboot/docker/Dockerfile.env)
 # --------------------------------------------------------------------------
 
-echo "==> Installing base development packages"
+echo "==> Installing extra dmod-boot packages"
 apt-get update
 apt-get install -y --no-install-recommends \
-    wget curl ca-certificates gnupg \
-    gcc g++ make git jq zip unzip xz-utils \
-    libcurl4-openssl-dev gcovr openocd libusb-1.0-0 \
-    cmake ninja-build \
-    python3 python3-pip python3-venv \
-    libncurses5 policykit-1 screen uml-utilities libc6-dev \
+    ca-certificates gnupg xz-utils \
+    screen uml-utilities libc6-dev \
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-    gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf binutils-arm-linux-gnueabihf \
-    gdb-multiarch
+    gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
 
-# libgtk2.0-0 was renamed to libgtk2.0-0t64 on some systems as part of
-# Debian's 64-bit time_t transition (modules/dmboot/scripts/setup-linux-env.sh
-# has the same fallback).
-if apt-cache show libgtk2.0-0 >/dev/null 2>&1; then
-    apt-get install -y --no-install-recommends libgtk2.0-0
-else
-    apt-get install -y --no-install-recommends libgtk2.0-0t64
-fi
-
-# --------------------------------------------------------------------------
-# 2. choco-scripts (modules/dmod/Docker/Dockerfile.env)
-# --------------------------------------------------------------------------
-
-echo "==> Installing choco-scripts"
-curl -fsSL https://raw.githubusercontent.com/JohnAmadis/choco-scripts/refs/heads/master/install-choco-scripts.sh | bash
+# Packages whose name/availability drifted across Debian releases - see
+# modules/dmboot/scripts/setup-linux-env.sh for the same libgtk2.0 fallback.
+apt_install_alt libncurses5 libncurses6                  # legacy ncurses ABI, if present
+apt_install_alt policykit-1 "polkitd pkexec"              # split into polkitd+pkexec since Bookworm
+apt_install_alt libgtk2.0-0 libgtk2.0-0t64                # renamed for the 64-bit time_t transition
 
 mkdir -p "$TOOLS_DIR"
 
 # --------------------------------------------------------------------------
-# 3. arm-none-eabi toolchain (modules/dmod/Docker/Dockerfile.env)
+# 2. arm-none-eabi toolchain (modules/dmod/Docker/Dockerfile.env)
 # --------------------------------------------------------------------------
 
 ARM_NONE_EABI_VERSION=13.3.rel1
@@ -109,7 +105,7 @@ rm -f "$TOOLS_DIR/$ARM_NONE_EABI_FILE_NAME"
 mv "$TOOLS_DIR/$ARM_NONE_EABI_DIR_NAME-$ARM_NONE_EABI_VERSION-$HOST_ARCH-arm-none-eabi" "$ARM_NONE_EABI_DIR_PATH"
 
 # --------------------------------------------------------------------------
-# 4. Xtensa (ESP32) toolchain + ESP-IDF (modules/dmod/Docker/Dockerfile.env)
+# 3. Xtensa (ESP32) toolchain + ESP-IDF (modules/dmod/Docker/Dockerfile.env)
 # --------------------------------------------------------------------------
 
 XTENSA_ESP_VERSION=14.2.0_20260121
@@ -137,7 +133,7 @@ git clone --recursive --branch "$ESP_IDF_VERSION" https://github.com/espressif/e
 IDF_TOOLS_PATH="$IDF_TOOLS_PATH" "$IDF_PATH/install.sh" esp32s3
 
 # --------------------------------------------------------------------------
-# 5. Renode (modules/dmboot/docker/Dockerfile.env) - x86_64 only, Renode
+# 4. Renode (modules/dmboot/docker/Dockerfile.env) - x86_64 only, Renode
 #    doesn't ship arm64 .deb packages; on a real Pi you debug real hardware
 #    via OpenOCD instead, so this is skipped rather than failing the build.
 # --------------------------------------------------------------------------
@@ -154,8 +150,8 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 6. cmake (modules/dmod/Docker/Dockerfile.env pins a specific version;
-#    the apt package installed above is a reasonable fallback if this fails)
+# 5. cmake (modules/dmod/Docker/Dockerfile.env pins a specific version;
+#    the apt package installed by basic.sh is a reasonable fallback here)
 # --------------------------------------------------------------------------
 
 CMAKE_VERSION=3.31.3
@@ -170,62 +166,52 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 7. Build & install dmod (modules/dmod/Docker/Dockerfile), from the local
-#    checkout bind-mounted at $HOST_REPO - keeps an editable copy under
-#    $SRC_DIR/dmod for day-to-day development.
-# --------------------------------------------------------------------------
-
-echo "==> Copying dmod source to $SRC_DIR/dmod"
-mkdir -p "$SRC_DIR"
-cp -a "$HOST_REPO/modules/dmod" "$SRC_DIR/dmod"
-rm -rf "$SRC_DIR/dmod/build"
-
-echo "==> Building & installing dmod"
-export DMOD_DMF_DIR=/opt/dmod-tools/dmf
-export DMOD_DMFC_DIR=/opt/dmod-tools/dmfc
-mkdir -p "$DMOD_DMF_DIR" "$DMOD_DMFC_DIR"
-(
-    cd "$SRC_DIR/dmod"
-    mkdir -p build
-    cd build
-    # Two-pass configure: see the comment in modules/dmod/Docker/Dockerfile -
-    # dmf-get must exist on disk before re-configuring with examples on.
-    cmake .. -DDMOD_DMF_DIR="$DMOD_DMF_DIR" -DDMOD_DMFC_DIR="$DMOD_DMFC_DIR" \
-             -DDMOD_TOOLS_NAME="$DMOD_TOOLS_NAME" -DDMOD_BUILD_EXAMPLES=OFF
-    cmake --build . --target dmf-get
-    cmake .. -DDMOD_BUILD_EXAMPLES=ON
-    cmake --build .
-    cmake --install . --prefix=/usr/local --component tools
-)
-export PATH="$PATH:/usr/local/bin"
-
-# --------------------------------------------------------------------------
-# 8. dmffs (modules/dmboot/docker/Dockerfile +
+# 6. dmffs (modules/dmboot/docker/Dockerfile +
 #    modules/dmboot/scripts/setup-linux-env.sh) - fetched via dmf-get, which
-#    was just built and installed above. Best-effort: don't fail the whole
-#    customization if the module registry isn't reachable from here.
+#    basic.sh already built and installed. Best-effort: don't fail the whole
+#    customization if the module registry isn't reachable from here. Also
+#    retried a few times - dmf-get has a confirmed intermittent segfault when
+#    run non-interactively (see basic.sh's comment on DMOD_BUILD_EXAMPLES),
+#    and empirically often succeeds on a subsequent attempt.
 # --------------------------------------------------------------------------
 
 echo "==> Installing dmffs (dmf-get make_dmffs)"
-if dmf-get make_dmffs --type dmf; then
+DMFFS_OK=0
+for attempt in 1 2 3; do
+    if dmf-get make_dmffs --type dmf; then
+        DMFFS_OK=1
+        break
+    fi
+    echo "    dmf-get make_dmffs failed (attempt $attempt/3) - retrying..." >&2
+done
+if [[ "$DMFFS_OK" -eq 1 ]]; then
     echo "alias make_dmffs='dmod_loader \${DMOD_DMF_DIR}/make_dmffs.dmf --args'" >> /etc/bash.bashrc
 else
-    echo "    Warning: 'dmf-get make_dmffs' failed (registry unreachable?) - skipping." >&2
+    echo "    Warning: 'dmf-get make_dmffs' failed after 3 attempts - skipping." >&2
 fi
 
 # --------------------------------------------------------------------------
-# 9. dmod-boot source, as an editable starting point (not built here - it's
+# 7. dmod-boot source, as an editable starting point (not built here - it's
 #    firmware, built per-target once you're on the board).
 # --------------------------------------------------------------------------
 
 if [[ -d "$HOST_REPO/modules/dmboot" ]]; then
     echo "==> Copying dmod-boot source to $SRC_DIR/dmod-boot"
-    cp -a "$HOST_REPO/modules/dmboot" "$SRC_DIR/dmod-boot"
+    # See the same rm+mkdir+cp -a "src/." pattern in basic.sh - the working
+    # .img is reused across runs, and `cp -a` doesn't overwrite an existing
+    # directory, it nests into it.
+    rm -rf "$SRC_DIR/dmod-boot"
+    mkdir -p "$SRC_DIR/dmod-boot"
+    cp -a "$HOST_REPO/modules/dmboot/." "$SRC_DIR/dmod-boot/"
     rm -rf "$SRC_DIR/dmod-boot/build"
+elif [[ -d "$SRC_DIR/dmod-boot" ]]; then
+    echo "==> Using pre-staged dmod-boot source at $SRC_DIR/dmod-boot"
+else
+    echo "==> No dmod-boot source available (no host-repo bind-mount and nothing pre-staged) - skipping"
 fi
 
 # --------------------------------------------------------------------------
-# 10. Node.js + Claude Code CLI (modules/dmod/Docker/Dockerfile.claude)
+# 8. Node.js + Claude Code CLI (modules/dmod/Docker/Dockerfile.claude)
 # --------------------------------------------------------------------------
 
 echo "==> Installing Node.js and the Claude Code CLI"
@@ -235,12 +221,12 @@ apt-get install -y nodejs ripgrep
 npm install -g @anthropic-ai/claude-code
 
 # --------------------------------------------------------------------------
-# 11. Wire up PATH / env vars for every login shell
+# 9. Wire up PATH / env vars for every login shell
 # --------------------------------------------------------------------------
 
 echo "==> Writing /etc/profile.d/dmod-dev.sh"
 cat > /etc/profile.d/dmod-dev.sh <<EOF
-# Added by customize-scripts/dmod-dev-environment.sh
+# Added by customize-scripts/full.sh (extends basic.sh's version)
 export DMOD_DMF_DIR=$DMOD_DMF_DIR
 export DMOD_DMFC_DIR=$DMOD_DMFC_DIR
 export IDF_PATH=$IDF_PATH

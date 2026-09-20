@@ -5,7 +5,14 @@
 # image to an SD card.
 #
 # Usage:
-#   sudo ./customize_image.sh <image.img> <hook-script> [-- hook-args...]
+#   sudo ./customize_image.sh [--grow-mb N] <image.img> <hook-script> [-- hook-args...]
+#
+# Raspberry Pi OS images ship with their root filesystem sized tight to their
+# content (a first-boot service normally expands it to fill the SD card) -
+# there's rarely more than a few hundred MB of free space to install
+# anything into. --grow-mb N grows the image file to N MiB (only ever up,
+# never shrinks an already-larger file) and resizes the root partition +
+# ext4 filesystem to fill the new space, before mounting/running the hook.
 #
 # The hook script is copied into the chroot and executed as /tmp/customize.sh
 # with the working directory set to the root of the mounted image. It runs
@@ -30,8 +37,22 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+GROW_MB=0
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --grow-mb)
+            GROW_MB="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
 if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <image.img> <hook-script> [-- hook-args...]" >&2
+    echo "Usage: $0 [--grow-mb N] <image.img> <hook-script> [-- hook-args...]" >&2
     exit 1
 fi
 
@@ -85,6 +106,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+RESIZE_NEEDED=0
+if [[ "$GROW_MB" -gt 0 ]]; then
+    CURRENT_BYTES="$(stat -c%s "$IMAGE")"
+    TARGET_BYTES=$(( GROW_MB * 1024 * 1024 ))
+    if (( TARGET_BYTES > CURRENT_BYTES )); then
+        echo "Growing $IMAGE to ${GROW_MB}MiB for customization headroom..."
+        truncate -s "$TARGET_BYTES" "$IMAGE"
+        RESIZE_NEEDED=1
+    else
+        echo "$IMAGE is already >= ${GROW_MB}MiB, no growth needed."
+    fi
+fi
+
 echo "Attaching $IMAGE as a loop device..."
 LOOP="$(losetup --find --show -P "$IMAGE")"
 
@@ -101,6 +135,17 @@ if [[ ! -e "$BOOT_PART" || ! -e "$ROOT_PART" ]]; then
     echo "Could not find partitions ${BOOT_PART} / ${ROOT_PART} on $LOOP." >&2
     echo "Is this a standard Raspberry Pi OS image (boot + root partition)?" >&2
     exit 1
+fi
+
+if [[ "$RESIZE_NEEDED" -eq 1 ]]; then
+    echo "Resizing root partition and filesystem to use the new space..."
+    command -v parted >/dev/null || { echo "parted not found - install it (sudo apt install parted) to use --grow-mb." >&2; exit 1; }
+    command -v resize2fs >/dev/null || { echo "resize2fs not found - install it (sudo apt install e2fsprogs) to use --grow-mb." >&2; exit 1; }
+    parted -s "$LOOP" resizepart 2 100%
+    partprobe "$LOOP" 2>/dev/null || true
+    udevadm settle 2>/dev/null || true
+    e2fsck -f -p "$ROOT_PART" || true
+    resize2fs "$ROOT_PART"
 fi
 
 MNT="$(mktemp -d /tmp/rpi-sd-customize.XXXXXX)"
