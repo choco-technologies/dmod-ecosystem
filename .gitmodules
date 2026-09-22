@@ -4,3 +4,132 @@
 [submodule "modules/dmod"]
 	path = modules/dmod
 	url = git@github.com:choco-technologies/dmod.git
+[submodule "modules/dm_sw_ring"]
+	path = modules/dm_sw_ring
+	url = git@github.com:choco-technologies/dm_sw_ring.git
+[submodule "modules/dmarp"]
+	path = modules/dmarp
+	url = git@github.com:choco-technologies/dmarp.git
+[submodule "modules/dmclk"]
+	path = modules/dmclk
+	url = git@github.com:choco-technologies/dmclk.git
+[submodule "modules/dmdevfs"]
+	path = modules/dmdevfs
+	url = git@github.com:choco-technologies/dmdevfs.git
+[submodule "modules/dmdhcp"]
+	path = modules/dmdhcp
+	url = git@github.com:choco-technologies/dmdhcp.git
+[submodule "modules/dmdma"]
+	path = modules/dmdma
+	url = git@github.com:choco-technologies/dmdma.git
+[submodule "modules/dmdrvi"]
+	path = modules/dmdrvi
+	url = git@github.com:choco-technologies/dmdrvi.git
+[submodule "modules/dmell"]
+	path = modules/dmell
+	url = git@github.com:choco-technologies/dmell.git
+[submodule "modules/dmenv"]
+	path = modules/dmenv
+	url = git@github.com:choco-technologies/dmenv.git
+[submodule "modules/dmeth"]
+	path = modules/dmeth
+	url = git@github.com:choco-technologies/dmeth.git
+[submodule "modules/dmffs"]
+	path = modules/dmffs
+	url = git@github.com:choco-technologies/dmffs.git
+[submodule "modules/dmfmc"]
+	path = modules/dmfmc
+	url = git@github.com:choco-technologies/dmfmc.git
+[submodule "modules/dmfsi"]
+	path = modules/dmfsi
+	url = git@github.com:choco-technologies/dmfsi.git
+[submodule "modules/dmftp"]
+	path = modules/dmftp
+	url = git@github.com:choco-technologies/dmftp.git
+[submodule "modules/dmgpio"]
+	path = modules/dmgpio
+	url = git@github.com:choco-technologies/dmgpio.git
+[submodule "modules/dmhaman"]
+	path = modules/dmhaman
+	url = git@github.com:choco-technologies/dmhaman.git
+[submodule "modules/dmheap"]
+	path = modules/dmheap
+	url = git@github.com:choco-technologies/dmheap.git
+[submodule "modules/dmicmp"]
+	path = modules/dmicmp
+	url = git@github.com:choco-technologies/dmicmp.git
+[submodule "modules/dmini"]
+	path = modules/dmini
+	url = git@github.com:choco-technologies/dmini.git
+[submodule "modules/dmip"]
+	path = modules/dmip
+	url = git@github.com:choco-technologies/dmip.git
+[submodule "modules/dmkeri"]
+	path = modules/dmkeri
+	url = git@github.com:choco-technologies/dmkeri.git
+[submodule "modules/dmlibc"]
+	path = modules/dmlibc
+	url = git@github.com:choco-technologies/dmlibc.git
+[submodule "modules/dmlist"]
+	path = modules/dmlist
+	url = git@github.com:choco-technologies/dmlist.git
+[submodule "modules/dmlog"]
+	path = modules/dmlog
+	url = git@github.com:choco-technologies/dmlog.git
+[submodule "modules/dmnet"]
+	path = modules/dmnet
+	url = git@github.com:choco-technologies/dmnet.git
+[submodule "modules/dmnetbridge"]
+	path = modules/dmnetbridge
+	url = git@github.com:choco-technologies/dmnetbridge.git
+[submodule "modules/dmnetif"]
+	path = modules/dmnetif
+	url = git@github.com:choco-technologies/dmnetif.git
+[submodule "modules/dmnetwork"]
+	path = modules/dmnetwork
+	url = git@github.com:choco-technologies/dmnetwork.git
+[submodule "modules/dmod-registry"]
+	path = modules/dmod-registry
+	url = git@github.com:choco-technologies/dmod-registry.git
+[submodule "modules/dmosi"]
+	path = modules/dmosi
+	url = git@github.com:choco-technologies/dmosi.git
+[submodule "modules/dmosi-freertos"]
+	path = modules/dmosi-freertos
+	url = git@github.com:choco-technologies/dmosi-freertos.git
+[submodule "modules/dmosi-posix"]
+	path = modules/dmosi-posix
+	url = git@github.com:choco-technologies/dmosi-posix.git
+[submodule "modules/dmosi-proc"]
+	path = modules/dmosi-proc
+	url = git@github.com:choco-technologies/dmosi-proc.git
+[submodule "modules/dmramfs"]
+	path = modules/dmramfs
+	url = git@github.com:choco-technologies/dmramfs.git
+[submodule "modules/dmroute"]
+	path = modules/dmroute
+	url = git@github.com:choco-technologies/dmroute.git
+[submodule "modules/dmspi"]
+	path = modules/dmspi
+	url = git@github.com:choco-technologies/dmspi.git
+[submodule "modules/dmsystem"]
+	path = modules/dmsystem
+	url = git@github.com:choco-technologies/dmsystem.git
+[submodule "modules/dmtcp"]
+	path = modules/dmtcp
+	url = git@github.com:choco-technologies/dmtcp.git
+[submodule "modules/dmtelnet"]
+	path = modules/dmtelnet
+	url = git@github.com:choco-technologies/dmtelnet.git
+[submodule "modules/dmtty"]
+	path = modules/dmtty
+	url = git@github.com:choco-technologies/dmtty.git
+[submodule "modules/dmuart"]
+	path = modules/dmuart
+	url = git@github.com:choco-technologies/dmuart.git
+[submodule "modules/dmudp"]
+	path = modules/dmudp
+	url = git@github.com:choco-technologies/dmudp.git
+[submodule "modules/dmvfs"]
+	path = modules/dmvfs
+	url = git@github.com:choco-technologies/dmvfs.git
