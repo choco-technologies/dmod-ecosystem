@@ -109,6 +109,9 @@
 [submodule "modules/dmroute"]
 	path = modules/dmroute
 	url = git@github.com:choco-technologies/dmroute.git
+[submodule "modules/dmsdio"]
+	path = modules/dmsdio
+	url = git@github.com:choco-technologies/dmsdio.git
 [submodule "modules/dmspi"]
 	path = modules/dmspi
 	url = git@github.com:choco-technologies/dmspi.git
