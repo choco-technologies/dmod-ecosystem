@@ -139,3 +139,6 @@
 [submodule "modules/dmrng"]
 	path = modules/dmrng
 	url = git@github.com:choco-technologies/dmrng.git
+[submodule "modules/dmrtc"]
+	path = modules/dmrtc
+	url = git@github.com:choco-technologies/dmrtc.git
