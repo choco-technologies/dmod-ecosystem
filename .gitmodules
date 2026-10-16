@@ -136,3 +136,9 @@
 [submodule "modules/dmvfs"]
 	path = modules/dmvfs
 	url = git@github.com:choco-technologies/dmvfs.git
+[submodule "modules/carhmi"]
+	path = modules/carhmi
+	url = git@github.com:choco-technologies/carhmi-demo.git
+[submodule "modules/dmntp"]
+	path = modules/dmntp
+	url = git@github.com:choco-technologies/dmntp.git
