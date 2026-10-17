@@ -148,3 +148,6 @@
 [submodule "modules/dmtls"]
 	path = modules/dmtls
 	url = git@github.com:choco-technologies/dmtls.git
+[submodule "modules/dmhttp"]
+	path = modules/dmhttp
+	url = git@github.com:choco-technologies/dmhttp.git
